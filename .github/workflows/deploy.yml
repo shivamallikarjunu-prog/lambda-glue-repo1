@@ -1,0 +1,55 @@
+name: Deploy AWS Stack
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  STACK_NAME: data-platform-stack
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+
+      - name: Show caller identity
+        run: aws sts get-caller-identity
+
+      - name: Deploy CloudFormation stack
+        run: |
+          aws cloudformation deploy \
+            --template-file infrastructure/cloudformation.yaml \
+            --stack-name $STACK_NAME \
+            --parameter-overrides \
+              BucketNamePrefix=data-platform \
+              GitHubRepo=shivamallikarjunu-prog/lambda-glue-repo1 \
+              GitHubBranch=main \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --no-fail-on-empty-changeset
+
+      - name: Upload sample input data for validation
+        run: |
+          mkdir -p tmp
+          cat <<'EOF' > tmp/sample.csv
+          id,name,city,state,country
+          1,Alice,New York,NY,USA
+          2,Bob,Chicago,IL,USA
+          3,Charlie,Toronto,ON,Canada
+          EOF
+          aws s3 cp tmp/sample.csv s3://data-platform-${{ secrets.AWS_ACCOUNT_ID }}-${{ env.AWS_REGION }}/incoming/sample.csv

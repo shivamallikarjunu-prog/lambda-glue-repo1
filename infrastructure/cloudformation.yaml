@@ -1,0 +1,321 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Deploys a single S3 bucket, Lambda validation trigger, Glue ETL job, and OIDC deployment role.
+
+Parameters:
+  BucketNamePrefix:
+    Type: String
+    Default: data-platform
+    Description: Prefix used to name the S3 bucket and supporting AWS resources.
+  GitHubRepo:
+    Type: String
+    Default: shivamallikarjunu-prog/lambda-glue-repo1
+    Description: GitHub repository in the form owner/repo.
+  GitHubBranch:
+    Type: String
+    Default: main
+    Description: Branch allowed to assume the GitHub OIDC deployment role.
+
+Resources:
+  DataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: incoming/
+            Function: !GetAtt ValidationLambda.Arn
+    DependsOn:
+      - BucketPermission
+
+  BucketPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ValidationLambda
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceArn: !Sub arn:aws:s3:::${DataBucket}
+      SourceAccount: !Ref AWS::AccountId
+
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: validation-lambda-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucket}
+                  - !Sub arn:aws:s3:::${DataBucket}/*
+              - Effect: Allow
+                Action:
+                  - glue:StartJobRun
+                Resource: '*'
+
+  ValidationLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${BucketNamePrefix}-csv-validator'
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 120
+      MemorySize: 512
+      Environment:
+        Variables:
+          GLUE_JOB_NAME: !Ref GlueJob
+      Code:
+        ZipFile: |
+          import csv
+          import io
+          import json
+          import os
+          import boto3
+          from urllib.parse import unquote_plus
+
+          s3_client = boto3.client("s3")
+          glue_client = boto3.client("glue")
+
+          REQUIRED_COLUMNS = ["id", "name", "city", "state", "country"]
+
+          def lambda_handler(event, context):
+              for record in event.get("Records", []):
+                  source_bucket = record["s3"]["bucket"]["name"]
+                  source_key = unquote_plus(record["s3"]["object"]["key"])
+
+                  if not source_key.startswith("incoming/"):
+                      continue
+
+                  response = s3_client.get_object(Bucket=source_bucket, Key=source_key)
+                  file_contents = response["Body"].read().decode("utf-8", errors="replace")
+
+                  if not file_contents.strip():
+                      return {"statusCode": 400, "message": "Uploaded file is empty."}
+
+                  reader = csv.DictReader(io.StringIO(file_contents))
+                  if reader.fieldnames is None:
+                      return {"statusCode": 400, "message": "CSV file has no header row."}
+
+                  normalized_headers = [header.strip().lower() for header in reader.fieldnames]
+                  missing_columns = [column for column in REQUIRED_COLUMNS if column not in normalized_headers]
+
+                  if missing_columns:
+                      return {
+                          "statusCode": 400,
+                          "message": f"Missing required columns: {missing_columns}",
+                          "foundColumns": normalized_headers,
+                      }
+
+                  glue_client.start_job_run(JobName=os.environ["GLUE_JOB_NAME"])
+                  return {
+                      "statusCode": 200,
+                      "message": "Validation passed and Glue job started.",
+                      "jobName": os.environ["GLUE_JOB_NAME"],
+                  }
+
+              return {"statusCode": 200, "message": "No S3 records processed."}
+
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: glue-job-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucket}
+                  - !Sub arn:aws:s3:::${DataBucket}/*
+
+  GlueScript:
+    Type: AWS::S3::BucketObject
+    Properties:
+      Bucket: !Ref DataBucket
+      Key: scripts/partition_data.py
+      Content: |
+        import sys
+        from awsglue.utils import getResolvedOptions
+        from pyspark.context import SparkContext
+        from awsglue.context import GlueContext
+
+        args = getResolvedOptions(sys.argv, ["JOB_NAME", "input_s3_path", "output_s3_path"])
+        sc = SparkContext()
+        glue_context = GlueContext(sc)
+        spark = glue_context.spark_session
+
+        input_path = args["input_s3_path"]
+        output_path = args["output_s3_path"]
+
+        df = spark.read.option("header", "true").option("inferSchema", "true").csv(input_path)
+        required_columns = ["id", "name", "city", "state", "country"]
+        missing_columns = [column for column in required_columns if column not in df.columns]
+
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {missing_columns}")
+
+        df = df.select(*required_columns)
+        df = df.na.drop(subset=required_columns)
+
+        df.write.mode("overwrite").partitionBy("city", "state", "country").parquet(output_path + "/partitioned-data/")
+
+        city_summary = df.groupBy("city").count().orderBy("city")
+        state_summary = df.groupBy("state").count().orderBy("state")
+        country_summary = df.groupBy("country").count().orderBy("country")
+
+        city_summary.write.mode("overwrite").csv(output_path + "/city_summary/")
+        state_summary.write.mode("overwrite").csv(output_path + "/state_summary/")
+        country_summary.write.mode("overwrite").csv(output_path + "/country_summary/")
+
+  GlueJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: !Sub '${BucketNamePrefix}-partition-job'
+      Role: !GetAtt GlueJobRole.Arn
+      GlueVersion: '4.0'
+      MaxRetries: 0
+      NumberOfWorkers: 2
+      WorkerType: G.1X
+      Command:
+        Name: glueetl
+        PythonVersion: '3'
+        ScriptLocation: !Sub 's3://${DataBucket}/scripts/partition_data.py'
+      DefaultArguments:
+        --job-bookmark-option: job-bookmark-disable
+        --enable-metrics: 'true'
+        --input_s3_path: !Sub 's3://${DataBucket}/incoming/'
+        --output_s3_path: !Sub 's3://${DataBucket}/processed/'
+      ExecutionProperty:
+        MaxConcurrentRuns: 1
+
+  GitHubActionsDeploymentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${BucketNamePrefix}-github-actions-deploy'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Sub arn:aws:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubRepo}:ref:refs/heads/${GitHubBranch}'
+      Policies:
+        - PolicyName: GitHubActionsDeploymentPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: CloudFormationAccess
+                Effect: Allow
+                Action:
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:CreateStack
+                  - cloudformation:DeleteChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:DescribeChangeSet
+                  - cloudformation:DescribeStacks
+                  - cloudformation:DescribeStackEvents
+                  - cloudformation:ExecuteChangeSet
+                  - cloudformation:GetTemplate
+                  - cloudformation:ListStacks
+                  - cloudformation:UpdateStack
+                  - iam:PassRole
+                Resource: '*'
+              - Sid: S3Access
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource:
+                  - !Sub arn:aws:s3:::${DataBucket}
+                  - !Sub arn:aws:s3:::${DataBucket}/*
+              - Sid: LambdaAndGlueAccess
+                Effect: Allow
+                Action:
+                  - lambda:CreateFunction
+                  - lambda:DeleteFunction
+                  - lambda:GetFunction
+                  - lambda:UpdateFunctionCode
+                  - lambda:UpdateFunctionConfiguration
+                  - lambda:AddPermission
+                  - lambda:RemovePermission
+                  - glue:CreateJob
+                  - glue:DeleteJob
+                  - glue:GetJobRun
+                  - glue:GetJobs
+                  - glue:StartJobRun
+                  - glue:UpdateJob
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: '*'
+
+Outputs:
+  DataBucket:
+    Description: Name of the S3 bucket used for incoming and processed data.
+    Value: !Ref DataBucket
+
+  LambdaFunctionName:
+    Description: Name of the S3-trigger validation Lambda function.
+    Value: !Ref ValidationLambda
+
+  GlueJobName:
+    Description: Name of the Glue ETL job that partitions the data.
+    Value: !Ref GlueJob
+
+  DeploymentRoleArn:
+    Description: ARN for the GitHub Actions OIDC role.
+    Value: !GetAtt GitHubActionsDeploymentRole.Arn
