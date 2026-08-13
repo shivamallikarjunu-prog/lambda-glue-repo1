@@ -1,15 +1,85 @@
-# lambda-glue-repo1
+# Lambda + Glue + S3 deployment repository
 
-Welcome to the lambda-glue-repo1 repository!
+This repository contains a minimal AWS data processing pipeline built with:
 
-## Description
-This repository contains AWS Lambda and AWS Glue resources and configurations.
+- S3 bucket for incoming files
+- Lambda function that validates uploaded CSV files
+- Glue job that partitions data by city, state, and country
+- GitHub Actions workflow using OIDC to deploy to AWS via CloudFormation
 
-## Getting Started
-To get started with this project, clone the repository and follow the setup instructions.
+## Architecture
 
-## Contributing
-Please refer to the contribution guidelines for information on how to contribute to this project.
+1. A CSV file lands in the S3 incoming/ prefix.
+2. S3 invokes the Lambda trigger.
+3. The Lambda validates the CSV header and required columns: id, name, city, state, country.
+4. If valid, the Lambda starts the Glue job.
+5. The Glue job reads the CSV and partitions the output by city, state, and country.
+6. Output is written to processed paths and summary CSV files are generated.
 
-## License
-This project is licensed under the MIT License.
+## Repository structure
+
+- [infrastructure/cloudformation.yaml](infrastructure/cloudformation.yaml) — CloudFormation stack for all AWS resources
+- [src/lambda/validate_and_trigger.py](src/lambda/validate_and_trigger.py) — validation Lambda logic
+- [src/glue/partition_data.py](src/glue/partition_data.py) — Glue ETL script
+- [.github/workflows/deploy.yml](.github/workflows/deploy.yml) — GitHub Actions deployment pipeline
+- [scripts/bootstrap_github_oidc.sh](scripts/bootstrap_github_oidc.sh) — creates the GitHub OIDC trust and role for AWS deployment
+
+## Required GitHub secrets
+
+Configure the following repository secret before pushing to main:
+
+- AWS_ROLE_TO_ASSUME — ARN of the IAM role used by GitHub Actions to deploy into AWS
+- AWS_ACCOUNT_ID — your AWS account ID (used in the example upload step)
+
+## Bootstrap OIDC role
+
+Run the following once locally after setting your AWS credentials:
+
+```bash
+export AWS_ACCOUNT_ID=123456789012
+export GITHUB_REPO=shivamallikarjunu-prog/lambda-glue-repo1
+export GITHUB_BRANCH=main
+bash scripts/bootstrap_github_oidc.sh
+```
+
+This creates the OIDC provider, the IAM role, and the trust policy that allows GitHub Actions to assume the role.
+
+## CloudFormation deployment
+
+The GitHub Actions workflow uses OIDC and runs:
+
+```bash
+aws cloudformation deploy \
+  --template-file infrastructure/cloudformation.yaml \
+  --stack-name data-platform-stack \
+  --parameter-overrides \
+    BucketNamePrefix=data-platform \
+    GitHubRepo=shivamallikarjunu-prog/lambda-glue-repo1 \
+    GitHubBranch=main \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset
+```
+
+## Example input CSV
+
+```csv
+id,name,city,state,country
+1,Alice,New York,NY,USA
+2,Bob,Chicago,IL,USA
+3,Charlie,Toronto,ON,Canada
+```
+
+Upload the file to:
+
+```bash
+aws s3 cp sample.csv s3://<your-bucket>/incoming/sample.csv
+```
+
+The Lambda validates the file and triggers the Glue job automatically.
+
+## Notes
+
+- The repository uses a single S3 bucket for both input and processing output.
+- Glue writes partitioned parquet data under the processed path.
+- Summary CSV outputs are produced under processed/city_summary, processed/state_summary, and processed/country_summary.
+- You may want to add more restrictive IAM permissions and bucket lifecycle rules before production use.
