@@ -26,23 +26,20 @@ This repository contains a minimal AWS data processing pipeline built with:
 
 ## Required GitHub secrets
 
-Configure the following repository secret before pushing to main:
+Configure the following repository secrets before pushing to main:
 
-- AWS_ROLE_TO_ASSUME — ARN of the IAM role used by GitHub Actions to deploy into AWS
-- AWS_ACCOUNT_ID — your AWS account ID (used in the example upload step)
+- `AWS_ROLE_TO_ASSUME` — Set to: `arn:aws:iam::344326804965:role/git-role`
+- `AWS_ACCOUNT_ID` — Set to: `344326804965`
 
-## Bootstrap OIDC role
+## OIDC Role Configuration
 
-Run the following once locally after setting your AWS credentials:
+The GitHub Actions workflow assumes the existing IAM role:
 
-```bash
-export AWS_ACCOUNT_ID=123456789012
-export GITHUB_REPO=shivamallikarjunu-prog/lambda-glue-repo1
-export GITHUB_BRANCH=main
-bash scripts/bootstrap_github_oidc.sh
-```
+- **Role ARN**: `arn:aws:iam::344326804965:role/git-role`
+- **Account ID**: `344326804965`
+- **Region**: `us-east-1`
 
-This creates the OIDC provider, the IAM role, and the trust policy that allows GitHub Actions to assume the role.
+The role must have a trust policy configured to allow GitHub Actions to assume it for this repository and branch.
 
 ## CloudFormation deployment
 
