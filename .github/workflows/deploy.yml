@@ -27,9 +27,13 @@ jobs:
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: arn:aws:iam::344326804965:role/git-role
+          role-session-name: github-actions-${{ github.run_id }}
 
-      - name: Show caller identity
-        run: aws sts get-caller-identity
+      - name: Verify AWS credentials
+        run: |
+          echo "Testing AWS credentials..."
+          aws sts get-caller-identity
+          echo "AWS credentials verified successfully"
 
       - name: Deploy CloudFormation stack
         run: |
