@@ -35,8 +35,6 @@ Resources:
                   - Name: prefix
                     Value: incoming/
             Function: !GetAtt ValidationLambda.Arn
-    DependsOn:
-      - BucketPermission
 
   BucketPermission:
     Type: AWS::Lambda::Permission
@@ -44,7 +42,7 @@ Resources:
       FunctionName: !Ref ValidationLambda
       Action: lambda:InvokeFunction
       Principal: s3.amazonaws.com
-      SourceArn: !Sub arn:aws:s3:::${DataBucket}
+      SourceArn: !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}
       SourceAccount: !Ref AWS::AccountId
 
   LambdaExecutionRole:
@@ -73,8 +71,8 @@ Resources:
                   - s3:GetObject
                   - s3:GetBucketLocation
                 Resource:
-                  - !Sub arn:aws:s3:::${DataBucket}
-                  - !Sub arn:aws:s3:::${DataBucket}/*
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/*
               - Effect: Allow
                 Action:
                   - glue:StartJobRun
@@ -91,7 +89,7 @@ Resources:
       MemorySize: 512
       Environment:
         Variables:
-          GLUE_JOB_NAME: !Ref GlueJob
+          GLUE_JOB_NAME: !Sub '${BucketNamePrefix}-partition-job'
       Code:
         ZipFile: |
           import csv
@@ -171,13 +169,13 @@ Resources:
                   - s3:DeleteObject
                   - s3:ListBucket
                 Resource:
-                  - !Sub arn:aws:s3:::${DataBucket}
-                  - !Sub arn:aws:s3:::${DataBucket}/*
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/*
 
   GlueScript:
     Type: AWS::S3::BucketObject
     Properties:
-      Bucket: !Ref DataBucket
+      Bucket: !Sub '${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}'
       Key: scripts/partition_data.py
       Content: |
         import sys
@@ -225,12 +223,12 @@ Resources:
       Command:
         Name: glueetl
         PythonVersion: '3'
-        ScriptLocation: !Sub 's3://${DataBucket}/scripts/partition_data.py'
+        ScriptLocation: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/scripts/partition_data.py'
       DefaultArguments:
         --job-bookmark-option: job-bookmark-disable
         --enable-metrics: 'true'
-        --input_s3_path: !Sub 's3://${DataBucket}/incoming/'
-        --output_s3_path: !Sub 's3://${DataBucket}/processed/'
+        --input_s3_path: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/incoming/'
+        --output_s3_path: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/processed/'
       ExecutionProperty:
         MaxConcurrentRuns: 1
 
@@ -280,8 +278,8 @@ Resources:
                   - s3:PutObject
                   - s3:DeleteObject
                 Resource:
-                  - !Sub arn:aws:s3:::${DataBucket}
-                  - !Sub arn:aws:s3:::${DataBucket}/*
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}
+                  - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/*
               - Sid: LambdaAndGlueAccess
                 Effect: Allow
                 Action:
