@@ -22,6 +22,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # DEBUG GITHUB OIDC TOKEN
+      - name: Debug GitHub OIDC
+        uses: github/actions-oidc-debugger@main
+        with:
+          audience: sts.amazonaws.com
+
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -50,10 +56,14 @@ jobs:
       - name: Upload sample input data for validation
         run: |
           mkdir -p tmp
+
           cat <<'EOF' > tmp/sample.csv
           id,name,city,state,country
           1,Alice,New York,NY,USA
           2,Bob,Chicago,IL,USA
           3,Charlie,Toronto,ON,Canada
           EOF
-          aws s3 cp tmp/sample.csv s3://data-platform-344326804965-${{ env.AWS_REGION }}/incoming/sample.csv
+
+          aws s3 cp \
+            tmp/sample.csv \
+            s3://data-platform-344326804965-${{ env.AWS_REGION }}/incoming/sample.csv
