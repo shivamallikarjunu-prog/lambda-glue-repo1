@@ -172,27 +172,6 @@ Resources:
                   - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}
                   - !Sub arn:aws:s3:::${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/*
 
-  GlueJob:
-    Type: AWS::Glue::Job
-    Properties:
-      Name: !Sub '${BucketNamePrefix}-partition-job'
-      Role: !GetAtt GlueJobRole.Arn
-      GlueVersion: '4.0'
-      MaxRetries: 0
-      NumberOfWorkers: 2
-      WorkerType: G.1X
-      Command:
-        Name: glueetl
-        PythonVersion: '3'
-        ScriptLocation: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/scripts/partition_data.py'
-      DefaultArguments:
-        --job-bookmark-option: job-bookmark-disable
-        --enable-metrics: 'true'
-        --input_s3_path: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/incoming/'
-        --output_s3_path: !Sub 's3://${BucketNamePrefix}-${AWS::AccountId}-${AWS::Region}/processed/'
-      ExecutionProperty:
-        MaxConcurrentRuns: 1
-
   GitHubActionsDeploymentRole:
     Type: AWS::IAM::Role
     Properties:
@@ -273,7 +252,11 @@ Outputs:
 
   GlueJobName:
     Description: Name of the Glue ETL job that partitions the data.
-    Value: !Ref GlueJob
+    Value: !Sub '${BucketNamePrefix}-partition-job'
+
+  GlueJobRoleArn:
+    Description: ARN for the IAM role used by the Glue ETL job.
+    Value: !GetAtt GlueJobRole.Arn
 
   DeploymentRoleArn:
     Description: ARN for the GitHub Actions OIDC role.

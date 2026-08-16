@@ -132,7 +132,7 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      - name: Upload Glue script and sample input
+      - name: Upload Glue script
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
@@ -140,6 +140,38 @@ jobs:
           aws s3 cp \
             src/glue/partition_data.py \
             "s3://${BUCKET_NAME}/scripts/partition_data.py"
+
+      - name: Create Glue job
+        run: |
+          STACK_NAME="${{ steps.target.outputs.stack }}"
+          GLUE_JOB_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`GlueJobName`].OutputValue' \
+            --output text)
+          GLUE_JOB_ROLE_ARN=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`GlueJobRoleArn`].OutputValue' \
+            --output text)
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
+
+          if ! aws glue get-job --job-name "$GLUE_JOB_NAME" >/dev/null 2>&1; then
+            aws glue create-job \
+              --name "$GLUE_JOB_NAME" \
+              --role "$GLUE_JOB_ROLE_ARN" \
+              --command Name=glueetl,ScriptLocation="s3://${BUCKET_NAME}/scripts/partition_data.py",PythonVersion=3 \
+              --glue-version 4.0 \
+              --max-retries 0 \
+              --number-of-workers 2 \
+              --worker-type G.1X \
+              --default-arguments '{"--job-bookmark-option":"job-bookmark-disable","--enable-metrics":"true","--input_s3_path":"s3://'"${BUCKET_NAME}"'/incoming/","--output_s3_path":"s3://'"${BUCKET_NAME}"'/processed/"}' \
+              --execution-property MaxConcurrentRuns=1
+          fi
+
+      - name: Upload sample input
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
 
           mkdir -p tmp
 
