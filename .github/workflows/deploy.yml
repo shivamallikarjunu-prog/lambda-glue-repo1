@@ -92,8 +92,15 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --no-fail-on-empty-changeset
 
-      - name: Upload sample input data for validation
+      - name: Upload Glue script and sample input
         run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
+
+          aws s3 cp \
+            src/glue/partition_data.py \
+            "s3://${BUCKET_NAME}/scripts/partition_data.py"
+
           mkdir -p tmp
 
           cat <<'EOF' > tmp/sample.csv
@@ -105,4 +112,4 @@ jobs:
 
           aws s3 cp \
             tmp/sample.csv \
-            s3://data-platform-344326804965-${{ env.AWS_REGION }}/incoming/sample.csv
+            "s3://${BUCKET_NAME}/incoming/sample.csv"
