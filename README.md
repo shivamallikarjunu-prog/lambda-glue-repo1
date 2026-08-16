@@ -26,17 +26,20 @@ This repository contains a minimal AWS data processing pipeline built with:
 
 ## Required GitHub secrets
 
-Configure the following repository secrets before pushing to main:
+The deployment workflow deploys to both the dev and TST accounts in parallel. Use the following role ARNs in the workflow configuration:
 
-- `AWS_ROLE_TO_ASSUME` — Set to: `arn:aws:iam::344326804965:role/git-role`
-- `AWS_ACCOUNT_ID` — Set to: `344326804965`
+- **Dev role**: `arn:aws:iam::040066346167:role/git_role`
+- **TST role**: `arn:aws:iam::039473174687:role/GITAWSrole`
+- **AWS region**: `us-east-1`
 
 ## OIDC Role Configuration
 
-The GitHub Actions workflow assumes the existing IAM role:
+The GitHub Actions workflow assumes both IAM roles for deployment:
 
-- **Role ARN**: `arn:aws:iam::344326804965:role/git-role`
-- **Account ID**: `344326804965`
+- **Dev role ARN**: `arn:aws:iam::040066346167:role/git_role`
+- **TST role ARN**: `arn:aws:iam::039473174687:role/GITAWSrole`
+- **Dev account ID**: `040066346167`
+- **TST account ID**: `039473174687`
 - **Region**: `us-east-1`
 
 The role must have a trust policy configured to allow GitHub Actions to assume it for this repository and branch.

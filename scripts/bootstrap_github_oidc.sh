@@ -3,13 +3,13 @@ set -euo pipefail
 
 # OIDC Role Configuration for GitHub Actions
 # This script validates the existing OIDC role and trust policy
-# Role ARN: arn:aws:iam::344326804965:role/git-role
+# Role ARN: arn:aws:iam::039473174687:role/GITAWSrole
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-344326804965}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-039473174687}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 GITHUB_REPO="${GITHUB_REPO:-shivamallikarjunu-prog/lambda-glue-repo1}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
-ROLE_NAME="${ROLE_NAME:-git-role}"
+ROLE_NAME="${ROLE_NAME:-GITAWSrole}"
 
 if [[ -z "$AWS_ACCOUNT_ID" ]]; then
   echo "Set AWS_ACCOUNT_ID before running this script."

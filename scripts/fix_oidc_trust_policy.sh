@@ -4,10 +4,10 @@ set -euo pipefail
 # Fix OIDC Trust Policy for Existing GitHub Actions Role
 # This script updates an existing role with the correct OIDC trust policy
 
-AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-344326804965}"
+AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-039473174687}"
 GITHUB_REPO="${GITHUB_REPO:-shivamallikarjunu-prog/lambda-glue-repo1}"
 GITHUB_BRANCH="${GITHUB_BRANCH:-main}"
-ROLE_NAME="${ROLE_NAME:-git-role}"
+ROLE_NAME="${ROLE_NAME:-GITAWSrole}"
 
 echo "================================"
 echo "Fixing OIDC Trust Policy"
