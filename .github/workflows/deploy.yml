@@ -5,6 +5,15 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target AWS environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - tst
 
 permissions:
   id-token: write
@@ -12,26 +21,45 @@ permissions:
 
 env:
   AWS_REGION: us-east-1
-  STACK_NAME: data-platform-stack
 
 jobs:
   deploy:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: dev
-            role-to-assume: arn:aws:iam::040066346167:role/git_role
-            stack-name: data-platform-stack-dev
-            account-id: 040066346167
-          - name: tst
-            role-to-assume: arn:aws:iam::039473174687:role/GITAWSrole
-            stack-name: data-platform-stack-tst
-            account-id: 039473174687
-
     runs-on: ubuntu-latest
 
     steps:
+      - name: Set target environment
+        id: target
+        shell: bash
+        run: |
+          set -e
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET_ENV="${{ github.event.inputs.environment }}"
+          else
+            TARGET_ENV="dev"
+          fi
+
+          case "$TARGET_ENV" in
+            dev)
+              echo "env=dev" >> "$GITHUB_OUTPUT"
+              echo "role=arn:aws:iam::040066346167:role/git_role" >> "$GITHUB_OUTPUT"
+              echo "stack=data-platform-stack-dev" >> "$GITHUB_OUTPUT"
+              echo "account=040066346167" >> "$GITHUB_OUTPUT"
+              ;;
+            tst)
+              echo "env=tst" >> "$GITHUB_OUTPUT"
+              echo "role=arn:aws:iam::039473174687:role/GITAWSrole" >> "$GITHUB_OUTPUT"
+              echo "stack=data-platform-stack-tst" >> "$GITHUB_OUTPUT"
+              echo "account=039473174687" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported environment: $TARGET_ENV"
+              exit 1
+              ;;
+          esac
+
+          echo "Deploying to $TARGET_ENV environment"
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -59,7 +87,6 @@ jobs:
 
           PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2)
 
-          # Add padding for base64 decoding
           case $((${#PAYLOAD} % 4)) in
             2) PAYLOAD="${PAYLOAD}==" ;;
             3) PAYLOAD="${PAYLOAD}=" ;;
@@ -84,20 +111,20 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-region: ${{ env.AWS_REGION }}
-          role-to-assume: ${{ matrix.role-to-assume }}
-          role-session-name: github-actions-${{ matrix.name }}-${{ github.run_id }}
+          role-to-assume: ${{ steps.target.outputs.role }}
+          role-session-name: github-actions-${{ steps.target.outputs.env }}-${{ github.run_id }}
 
       - name: Verify AWS credentials
         run: |
-          echo "Testing AWS credentials for ${{ matrix.name }} account..."
+          echo "Testing AWS credentials for ${{ steps.target.outputs.env }} account..."
           aws sts get-caller-identity
-          echo "AWS credentials verified successfully for account ${{ matrix.account-id }}"
+          echo "AWS credentials verified successfully for account ${{ steps.target.outputs.account }}"
 
       - name: Deploy CloudFormation stack
         run: |
           aws cloudformation deploy \
             --template-file infrastructure/cloudformation.yaml \
-            --stack-name ${{ matrix.stack-name }} \
+            --stack-name ${{ steps.target.outputs.stack }} \
             --parameter-overrides \
               BucketNamePrefix=data-platform \
               GitHubRepo=shivamallikarjunu-prog/lambda-glue-repo1 \

@@ -26,7 +26,7 @@ This repository contains a minimal AWS data processing pipeline built with:
 
 ## Required GitHub secrets
 
-The deployment workflow deploys to both the dev and TST accounts in parallel. Use the following role ARNs in the workflow configuration:
+The deployment workflow defaults to the dev account on any push to main. For TST, trigger the workflow manually and choose the `tst` option from the workflow inputs.
 
 - **Dev role**: `arn:aws:iam::040066346167:role/git_role`
 - **TST role**: `arn:aws:iam::039473174687:role/GITAWSrole`
@@ -34,7 +34,7 @@ The deployment workflow deploys to both the dev and TST accounts in parallel. Us
 
 ## OIDC Role Configuration
 
-The GitHub Actions workflow assumes both IAM roles for deployment:
+The GitHub Actions workflow assumes one IAM role at a time based on the selected environment:
 
 - **Dev role ARN**: `arn:aws:iam::040066346167:role/git_role`
 - **TST role ARN**: `arn:aws:iam::039473174687:role/GITAWSrole`
