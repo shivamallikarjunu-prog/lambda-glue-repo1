@@ -43,13 +43,15 @@ jobs:
             dev)
               echo "env=dev" >> "$GITHUB_OUTPUT"
               echo "role=arn:aws:iam::040066346167:role/git_role" >> "$GITHUB_OUTPUT"
-              echo "stack=data-platform-stack-dev" >> "$GITHUB_OUTPUT"
+              echo "stack=lambda-glue-dev" >> "$GITHUB_OUTPUT"
+              echo "resource-prefix=lambda-glue-dev" >> "$GITHUB_OUTPUT"
               echo "account=040066346167" >> "$GITHUB_OUTPUT"
               ;;
             tst)
               echo "env=tst" >> "$GITHUB_OUTPUT"
               echo "role=arn:aws:iam::039473174687:role/GITAWSrole" >> "$GITHUB_OUTPUT"
-              echo "stack=data-platform-stack-tst" >> "$GITHUB_OUTPUT"
+              echo "stack=lambda-glue-tst" >> "$GITHUB_OUTPUT"
+              echo "resource-prefix=lambda-glue-tst" >> "$GITHUB_OUTPUT"
               echo "account=039473174687" >> "$GITHUB_OUTPUT"
               ;;
             *)
@@ -126,7 +128,7 @@ jobs:
             --template-file infrastructure/cloudformation.yaml \
             --stack-name ${{ steps.target.outputs.stack }} \
             --parameter-overrides \
-              BucketNamePrefix=data-platform \
+              BucketNamePrefix=${{ steps.target.outputs.resource-prefix }} \
               GitHubRepo=shivamallikarjunu-prog/lambda-glue-repo1 \
               GitHubBranch=main \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -134,8 +136,10 @@ jobs:
 
       - name: Upload Glue script
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "${{ steps.target.outputs.stack }}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
+            --output text)
 
           aws s3 cp \
             src/glue/partition_data.py \
@@ -152,8 +156,10 @@ jobs:
             --stack-name "$STACK_NAME" \
             --query 'Stacks[0].Outputs[?OutputKey==`GlueJobRoleArn`].OutputValue' \
             --output text)
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
+            --output text)
 
           if ! aws glue get-job --job-name "$GLUE_JOB_NAME" >/dev/null 2>&1; then
             aws glue create-job \
@@ -170,8 +176,10 @@ jobs:
 
       - name: Upload sample input
         run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          BUCKET_NAME="data-platform-${ACCOUNT_ID}-${AWS_REGION}"
+          BUCKET_NAME=$(aws cloudformation describe-stacks \
+            --stack-name "${{ steps.target.outputs.stack }}" \
+            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
+            --output text)
 
           mkdir -p tmp
 
