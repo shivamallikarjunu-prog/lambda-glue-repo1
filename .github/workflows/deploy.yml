@@ -4,12 +4,14 @@ on:
   push:
     branches:
       - main
+      - tst
+
   workflow_dispatch:
     inputs:
       environment:
         description: Target AWS environment
         required: true
-        default: dev
+        default: tst
         type: choice
         options:
           - dev
@@ -27,49 +29,72 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
+      # ============================================================
+      # STEP 1 - DETERMINE TARGET ENVIRONMENT
+      # ============================================================
+
       - name: Set target environment
         id: target
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             TARGET_ENV="${{ github.event.inputs.environment }}"
+          elif [ "${{ github.ref }}" = "refs/heads/tst" ]; then
+            TARGET_ENV="tst"
           else
             TARGET_ENV="dev"
           fi
 
           case "$TARGET_ENV" in
+
             dev)
               echo "env=dev" >> "$GITHUB_OUTPUT"
               echo "role=arn:aws:iam::040066346167:role/git_role" >> "$GITHUB_OUTPUT"
               echo "stack=lambda-glue-dev" >> "$GITHUB_OUTPUT"
               echo "resource-prefix=lambda-glue-dev" >> "$GITHUB_OUTPUT"
               echo "account=040066346167" >> "$GITHUB_OUTPUT"
+              echo "branch=main" >> "$GITHUB_OUTPUT"
               ;;
+
             tst)
               echo "env=tst" >> "$GITHUB_OUTPUT"
               echo "role=arn:aws:iam::039473174687:role/GITAWSrole" >> "$GITHUB_OUTPUT"
               echo "stack=lambda-glue-tst" >> "$GITHUB_OUTPUT"
               echo "resource-prefix=lambda-glue-tst" >> "$GITHUB_OUTPUT"
               echo "account=039473174687" >> "$GITHUB_OUTPUT"
+              echo "branch=tst" >> "$GITHUB_OUTPUT"
               ;;
+
             *)
               echo "Unsupported environment: $TARGET_ENV"
               exit 1
               ;;
           esac
 
-          echo "Deploying to $TARGET_ENV environment"
+          echo "=========================================="
+          echo "Target environment : $TARGET_ENV"
+          echo "AWS account        : $(grep '^account=' "$GITHUB_OUTPUT" | cut -d= -f2)"
+          echo "Branch             : $(grep '^branch=' "$GITHUB_OUTPUT" | cut -d= -f2)"
+          echo "=========================================="
+
+      # ============================================================
+      # STEP 2 - CHECKOUT
+      # ============================================================
 
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Get and decode the GitHub OIDC token
+      # ============================================================
+      # STEP 3 - INSPECT GITHUB OIDC TOKEN
+      # ============================================================
+
       - name: Inspect GitHub OIDC token
         shell: bash
         run: |
-          set -e
+          set -euo pipefail
 
           echo "Requesting GitHub OIDC token..."
 
@@ -109,6 +134,10 @@ jobs:
           echo ""
           echo "===== END OIDC CLAIMS ====="
 
+      # ============================================================
+      # STEP 4 - CONFIGURE AWS OIDC CREDENTIALS
+      # ============================================================
+
       - name: Configure AWS credentials with OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -116,80 +145,77 @@ jobs:
           role-to-assume: ${{ steps.target.outputs.role }}
           role-session-name: github-actions-${{ steps.target.outputs.env }}-${{ github.run_id }}
 
+      # ============================================================
+      # STEP 5 - VERIFY AWS ACCOUNT
+      # ============================================================
+
       - name: Verify AWS credentials
         run: |
-          echo "Testing AWS credentials for ${{ steps.target.outputs.env }} account..."
+          set -euo pipefail
+
+          echo "Testing AWS credentials..."
+
           aws sts get-caller-identity
-          echo "AWS credentials verified successfully for account ${{ steps.target.outputs.account }}"
+
+          echo ""
+          echo "Expected AWS account:"
+          echo "${{ steps.target.outputs.account }}"
+
+          echo ""
+          echo "Actual AWS account:"
+          aws sts get-caller-identity \
+            --query Account \
+            --output text
+
+      # ============================================================
+      # STEP 6 - VALIDATE CLOUDFORMATION
+      # ============================================================
+
+      - name: Validate CloudFormation template
+        run: |
+          set -euo pipefail
+
+          aws cloudformation validate-template \
+            --template-body file://infrastructure/cloudformation.yaml
+
+      # ============================================================
+      # STEP 7 - DEPLOY CLOUDFORMATION
+      # ============================================================
 
       - name: Deploy CloudFormation stack
         run: |
+          set -euo pipefail
+
+          echo "Deploying stack:"
+          echo "${{ steps.target.outputs.stack }}"
+
+          echo "Deploying branch:"
+          echo "${{ steps.target.outputs.branch }}"
+
           aws cloudformation deploy \
             --template-file infrastructure/cloudformation.yaml \
-            --stack-name ${{ steps.target.outputs.stack }} \
+            --stack-name "${{ steps.target.outputs.stack }}" \
             --parameter-overrides \
-              BucketNamePrefix=${{ steps.target.outputs.resource-prefix }} \
-              GitHubRepo=shivamallikarjunu-prog/lambda-glue-repo1 \
-              GitHubBranch=main \
+              BucketNamePrefix="${{ steps.target.outputs.resource-prefix }}" \
+              GitHubRepo="shivamallikarjunu-prog/lambda-glue-repo1" \
+              GitHubBranch="${{ steps.target.outputs.branch }}" \
             --capabilities CAPABILITY_NAMED_IAM \
-            --no-fail-on-empty-changeset
+            --region "${{ env.AWS_REGION }}"
 
-      - name: Upload Glue script
+      # ============================================================
+      # STEP 8 - SHOW STACK OUTPUTS
+      # ============================================================
+
+      - name: Show stack outputs
         run: |
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
+          set -euo pipefail
+
+          echo "=========================================="
+          echo "CloudFormation Outputs"
+          echo "=========================================="
+
+          aws cloudformation describe-stacks \
             --stack-name "${{ steps.target.outputs.stack }}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
-            --output text)
-
-          aws s3 cp \
-            src/glue/partition_data.py \
-            "s3://${BUCKET_NAME}/scripts/partition_data.py"
-
-      - name: Create Glue job
-        run: |
-          STACK_NAME="${{ steps.target.outputs.stack }}"
-          GLUE_JOB_NAME=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --query 'Stacks[0].Outputs[?OutputKey==`GlueJobName`].OutputValue' \
-            --output text)
-          GLUE_JOB_ROLE_ARN=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --query 'Stacks[0].Outputs[?OutputKey==`GlueJobRoleArn`].OutputValue' \
-            --output text)
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name "$STACK_NAME" \
-            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
-            --output text)
-
-          if ! aws glue get-job --job-name "$GLUE_JOB_NAME" >/dev/null 2>&1; then
-            aws glue create-job \
-              --name "$GLUE_JOB_NAME" \
-              --role "$GLUE_JOB_ROLE_ARN" \
-              --command Name=glueetl,ScriptLocation="s3://${BUCKET_NAME}/scripts/partition_data.py",PythonVersion=3 \
-              --glue-version 4.0 \
-              --max-retries 0 \
-              --number-of-workers 2 \
-              --worker-type G.1X \
-              --default-arguments '{"--job-bookmark-option":"job-bookmark-disable","--enable-metrics":"true","--input_s3_path":"s3://'"${BUCKET_NAME}"'/incoming/","--output_s3_path":"s3://'"${BUCKET_NAME}"'/processed/"}' \
-              --execution-property MaxConcurrentRuns=1
-          fi
-
-      - name: Upload sample input
-        run: |
-          BUCKET_NAME=$(aws cloudformation describe-stacks \
-            --stack-name "${{ steps.target.outputs.stack }}" \
-            --query 'Stacks[0].Outputs[?OutputKey==`DataBucket`].OutputValue' \
-            --output text)
-
-          mkdir -p tmp
-
-          cat <<'EOF' > tmp/sample.csv
-          id,name,city,state,country
-          1,Alice,New York,NY,USA
-          2,Bob,Chicago,IL,USA
-          3,Charlie,Toronto,ON,Canada
-          EOF
-
-          aws s3 cp \
-            tmp/sample.csv \
-            "s3://${BUCKET_NAME}/incoming/sample.csv"
+            --region "${{ env.AWS_REGION }}" \
+            --query "Stacks[0].Outputs" \
+            --output table
